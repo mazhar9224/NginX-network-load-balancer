@@ -1,0 +1,199 @@
+################################################################################
+#      Copyright (C) 2020        Sebastian Francisco Colomar Bauza             #
+#      SPDX-License-Identifier:  GPL-2.0-only                                  #
+################################################################################
+name: CI                                                                       #
+on:                                                                            #
+  push:                                                                        #
+    branches:                                                                  #
+    - docker                                                                   #
+jobs:                                                                          #
+  docker:                                                                      #
+    runs-on: ubuntu-18.04                                                      #
+    steps:                                                                     #
+    - name: checkout                                                           #
+      uses: actions/checkout@v2                                                #
+    - name: test                                                               #
+      run: |                                                                   #
+        set -x                                                                 ;
+                                                                               #
+        branch=$(basename $GITHUB_REF)                                         ;
+        project=$(basename $GITHUB_REPOSITORY)                                 ;
+                                                                               #
+        ip_master1=10.168.1.100                                                ;
+        ip_master2=10.168.3.100                                                ;
+        ip_master3=10.168.5.100                                                ;
+        port_master=6443                                                       ;
+        uuid=.                                                                 ;
+        sed --in-place s/port_master/$port_master/                             \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master1/$ip_master1/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master2/$ip_master2/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master3/$ip_master3/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+                                                                               #
+        sudo cp -rv run/* /run                                                 ;
+                                                                               #
+        docker run -d -p $port_master:8080                                     \
+          --cpus "0.1" -m 100m --memory-reservation 100m                       \
+          --health-cmd "netstat -ln | grep -q 8080"                            \
+          --health-interval=10s                                                \
+          --health-retries=3                                                   \
+          --health-start-period=30s                                            \
+          --health-timeout=1s                                                  \
+          --volume                                                             \
+            /run/configs/etc/nginx/nginx.conf:/etc/nginx/nginx.conf:ro         \
+          --volume                                                             \
+            /run/secrets/etc/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro \
+          --name test academiaonline/nginx:8.2                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec test ps                                                \
+            |                                                                  \
+            grep "1.*nginx: master process"                                    \
+            &&                                                                 \
+            break                                                              ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker logs test                                                   \
+              2>& 1                                                            \
+            |                                                                  \
+            grep "start worker processes"                                      \
+            &&                                                                 \
+            break                                                              ;
+          done                                                                 ;
+                                                                               #
+  swarm:                                                                       #
+    env:                                                                       #
+      mode: swarm                                                              #
+    runs-on: ubuntu-18.04                                                      #
+    steps:                                                                     #
+    - name: checkout                                                           #
+      uses: actions/checkout@v2                                                #
+    - name: test                                                               #
+      run: |                                                                   #
+        set -x                                                                 ;
+                                                                               #
+        branch=$(basename $GITHUB_REF)                                         ;
+        project=$(basename $GITHUB_REPOSITORY)                                 ;
+                                                                               #
+        compose=etc/$mode/manifests/$project.yaml                              ;
+                                                                               #
+        docker swarm init                                                      ;
+        sed -i /node.role/s/worker/manager/ $compose                           ;
+                                                                               #
+        uuid=.                                                                 ;
+        ip_master1=10.168.1.100                                                ;
+        ip_master2=10.168.3.100                                                ;
+        ip_master3=10.168.5.100                                                ;
+        port_master=6443                                                       ;
+        sed --in-place s/port_master/$port_master/                             \
+          $uuid/$compose                                                       ;
+        sed --in-place s/port_master/$port_master/                             \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master1/$ip_master1/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master2/$ip_master2/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master3/$ip_master3/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+                                                                               #
+        sudo cp -rv run/* /run                                                 ;
+                                                                               #
+        docker stack deploy -c $compose $project                               ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker service ls                                                  \
+            |                                                                  \
+            grep "$project.*replicated.*\([0-9]\)/\1.*8080"                    \
+            &&                                                                 \
+            break                                                              ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker service logs ${project}_${project}                          \
+              2>& 1                                                            \
+            |                                                                  \
+            grep "start worker processes"                                      \
+            &&                                                                 \
+            break                                                              ;
+          done                                                                 ;
+                                                                               #
+  kubernetes:                                                                  #
+    env:                                                                       #
+      mode: kubernetes                                                         #
+    runs-on: ubuntu-18.04                                                      #
+    steps:                                                                     #
+    - name: checkout                                                           #
+      uses: actions/checkout@v2                                                #
+    - name: test                                                               #
+      run: |                                                                   #
+        set -x                                                                 ;
+                                                                               #
+        branch=$(basename $GITHUB_REF)                                         ;
+        project=$(basename $GITHUB_REPOSITORY)                                 ;
+                                                                               #
+        ip_master1=10.168.1.100                                                ;
+        ip_master2=10.168.3.100                                                ;
+        ip_master3=10.168.5.100                                                ;
+        port_master=6443                                                       ;
+        uuid=.                                                                 ;
+        sed --in-place s/port_master/$port_master/                             \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master1/$ip_master1/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master2/$ip_master2/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+        sed --in-place s/ip_master3/$ip_master3/                               \
+          $uuid/run/secrets/etc/nginx/conf.d/default.conf                      ;
+                                                                               #
+        sudo cp -rv run/* /run                                                 ;
+                                                                               #
+        compose=etc/$mode/manifests/$project.yaml                              ;
+                                                                               #
+        uuid=$( md5sum $compose | cut -d\  -f1 )                               ;
+        git clone --single-branch -b v1.2                                      \
+          https://github.com/academiaonline/kubernetes $uuid                   ;
+        path=$uuid/bin/cluster/ubuntu18/install-docker-kubelet.sh              ;
+        source $path                                                           ;
+        path=$uuid/bin/cluster/ubuntu18/install-leader.sh                      ;
+        source $path                                                           ;
+        master=$( kubectl get node | grep master | awk '{ print $1 }' )        ;
+        kubectl taint node $master node-role.kubernetes.io/master:NoSchedule-  ;
+        path=$uuid/bin/configs-secrets-gen.sh                                  ;
+        source $path                                                           ;
+        rm -rf $uuid                                                           ;
+                                                                               #
+        sed -i /imagePullPolicy/s/Always/Never/ $compose                       ;
+                                                                               #
+        kubectl apply -f $compose                                              ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            kubectl get deploy | grep "$project.*\([0-9]\)/\1" && break        ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            kubectl get svc | grep "$project.*ClusterIP.*8080/TCP" && break    ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            kubectl logs deploy/$project                                       \
+            |                                                                  \
+            grep "start worker processes"                                      \
+            &&                                                                 \
+            break                                                              ;
+          done                                                                 ;
+################################################################################
